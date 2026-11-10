@@ -1,3 +1,0 @@
-/var/home/proof/Documents/A man's dream will never die/cpp/snake/build/CMakeFiles/snake.dir
-/var/home/proof/Documents/A man's dream will never die/cpp/snake/build/CMakeFiles/edit_cache.dir
-/var/home/proof/Documents/A man's dream will never die/cpp/snake/build/CMakeFiles/rebuild_cache.dir
