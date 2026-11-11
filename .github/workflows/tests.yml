@@ -17,7 +17,7 @@ jobs:
       - name: Compile tests
         run: |
           g++ -std=c++20 -Wall -Wextra -Wpedantic \
-            game_logic.cpp tests.cpp \
+            tests.cpp \
             -o snake_tests
 
       - name: Run tests
