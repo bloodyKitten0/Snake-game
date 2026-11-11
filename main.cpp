@@ -50,21 +50,29 @@ class terminal_set{
 
 void direction(char dir, int& dx, int& dy) {
     switch(dir) {
-        case 'w':
-            dx = 0;
-            dy = -1;
+        case 'w' :
+            if (dy != 1) {
+                dx = 0;
+                dy = -1;
+            }
             break;
         case 's':
-            dx = 0;
-            dy = 1;
+            if (dy != -1) {
+                dx = 0;
+                dy = 1;
+            }
             break;
         case 'a':
+            if(dx!=1){
             dx = -1;
             dy = 0;
+            }
             break;
         case 'd':
+            if(dx!=-1){
             dx = 1;
             dy = 0;
+            }
             break;
     }
 }
