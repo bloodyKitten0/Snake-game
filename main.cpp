@@ -6,6 +6,9 @@
 #include <thread>
 #include <random>
 #include <utility>
+#include <system_error>
+#include <cerrno>
+#include <cstring>
 
 const int h = 20;
 const int w = 40;
@@ -18,23 +21,32 @@ std::uniform_int_distribution<> locw(1, w - 2);
 bool readInput(char& key) {
     return read(STDIN_FILENO, &key, 1) == 1;
 }
+class terminal_set{
+    private:
+        termios originalTerminal;
+    public:
+        terminal_set() {
+            if (tcgetattr(STDIN_FILENO, &originalTerminal) == -1) {
+                throw std::system_error(errno, std::generic_category(), "Failed to get terminal attributes");
+            }
+            termios newTerminal = originalTerminal;
+            newTerminal.c_lflag &= ~(ICANON | ECHO);
+            newTerminal.c_cc[VMIN] = 0;
+            newTerminal.c_cc[VTIME] = 0;
+            if (tcsetattr(STDIN_FILENO, TCSANOW, &newTerminal) == -1) {
+                throw std::system_error(errno, std::generic_category(), "Failed to set terminal attributes");
+            }
+        }
+        ~terminal_set() noexcept {
+            if (tcsetattr(STDIN_FILENO, TCSANOW, &originalTerminal) == -1) {
+                std::cerr << "Failed to restore terminal attributes: " << std::strerror(errno) << "\n";
+            }
+        }
 
-termios originalTerminal;
-void enableTerminalInput() {
-    tcgetattr(STDIN_FILENO, &originalTerminal);
+        terminal_set(const terminal_set&) = delete;
+        terminal_set& operator=(const terminal_set&) = delete;
 
-    termios newTerminal = originalTerminal;
-
-    newTerminal.c_lflag &= ~(ICANON | ECHO);
-
-    newTerminal.c_cc[VMIN] = 0;
-    newTerminal.c_cc[VTIME] = 0;
-
-    tcsetattr(STDIN_FILENO, TCSANOW, &newTerminal);
-}
-void restoreTerminal() {
-    tcsetattr(STDIN_FILENO, TCSANOW, &originalTerminal);
-}
+};
 
 void direction(char dir, int& dx, int& dy) {
     switch(dir) {
@@ -154,7 +166,7 @@ int main() {
     generateFood(food, snake);
     int dx = 1;
     int dy = 0;
-    enableTerminalInput();
+    terminal_set Let_the_show_begin;
     bool running = true;
 
     while (running) {
@@ -183,6 +195,5 @@ int main() {
         );
         std::cout << "dx: " << dx << " dy: " << dy << '\n';
     }
-    restoreTerminal();
     return 0;
 }
