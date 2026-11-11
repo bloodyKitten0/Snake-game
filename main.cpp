@@ -1,207 +1,223 @@
-#include <iostream>
-#include <vector>
-#include <termios.h>
-#include <unistd.h>
+#include "game_logic.hpp"
+#include <algorithm>
 #include <chrono>
-#include <thread>
-#include <random>
-#include <utility>
-#include <system_error>
-#include <cerrno>
+#include <csignal>
 #include <cstring>
+#include <iostream>
+#include <random>
+#include <termios.h>
+#include <thread>
+#include <unistd.h>
 
-const int h = 20;
-const int w = 40;
+using namespace Snake;
 
-std::random_device rd;
-std::mt19937 gen(rd());
-std::uniform_int_distribution<> loch(1, h - 2);
-std::uniform_int_distribution<> locw(1, w - 2);
+volatile std::sig_atomic_t stopRequested = 0;
 
-bool readInput(char& key) {
-    return read(STDIN_FILENO, &key, 1) == 1;
+void handleSignal(int) {
+    stopRequested = 1;
 }
-class terminal_set{
-    private:
-        termios originalTerminal;
-    public:
-        terminal_set() {
-            if (tcgetattr(STDIN_FILENO, &originalTerminal) == -1) {
-                throw std::system_error(errno, std::generic_category(), "Failed to get terminal attributes");
-            }
-            termios newTerminal = originalTerminal;
-            newTerminal.c_lflag &= ~(ICANON | ECHO);
-            newTerminal.c_cc[VMIN] = 0;
-            newTerminal.c_cc[VTIME] = 0;
-            if (tcsetattr(STDIN_FILENO, TCSANOW, &newTerminal) == -1) {
-                throw std::system_error(errno, std::generic_category(), "Failed to set terminal attributes");
-            }
-        }
-        ~terminal_set() noexcept {
-            if (tcsetattr(STDIN_FILENO, TCSANOW, &originalTerminal) == -1) {
-                std::cerr << "Failed to restore terminal attributes: " << std::strerror(errno) << "\n";
-            }
+
+class Terminal {
+private:
+    termios original{};
+    bool configured = false;
+
+public:
+    Terminal() {
+        if (tcgetattr(STDIN_FILENO, &original) == -1) {
+            throw std::runtime_error("Could not read terminal settings");
         }
 
-        terminal_set(const terminal_set&) = delete;
-        terminal_set& operator=(const terminal_set&) = delete;
+        termios raw = original;
+        raw.c_lflag &= ~(ICANON | ECHO);
+        raw.c_cc[VMIN] = 0;
+        raw.c_cc[VTIME] = 0;
 
+        if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) == -1) {
+            throw std::runtime_error("Could not configure terminal");
+        }
+
+        configured = true;
+    }
+
+    ~Terminal() {
+        if (configured) {
+            tcsetattr(STDIN_FILENO, TCSANOW, &original);
+            std::cout << "\033[?25h" << std::flush;
+        }
+    }
+
+    Terminal(const Terminal&) = delete;
+    Terminal& operator=(const Terminal&) = delete;
 };
 
-void direction(char dir, int& dx, int& dy) {
-    switch(dir) {
-        case 'w' :
-            if (dy != 1) {
-                dx = 0;
-                dy = -1;
-            }
-            break;
-        case 's':
-            if (dy != -1) {
-                dx = 0;
-                dy = 1;
-            }
-            break;
-        case 'a':
-            if(dx!=1){
-            dx = -1;
-            dy = 0;
-            }
-            break;
-        case 'd':
-            if(dx!=-1){
-            dx = 1;
-            dy = 0;
-            }
-            break;
-    }
-}
+char readInput() {
+    char input;
+    ssize_t result = read(STDIN_FILENO, &input, 1);
 
-void movement(std::vector<std::pair<int,int>>& snake, int dx,int dy){
-    for(int i = snake.size()-1 ; i > 0 ; i--){
-        snake[i] = snake[i-1];
-    }
-    snake[0].first += dx;
-    snake[0].second += dy;
-}
-
-void generateFood(
-    std::pair<int,int>& food,
-    const std::vector<std::pair<int,int>>& snake
-) {
-    int x;
-    int y;
-    bool occupied;
-    do {
-        x = locw(gen);
-        y = loch(gen);
-        occupied = false;
-        for (const auto& segment : snake) {
-            if (segment.first == x && segment.second == y) {
-                occupied = true;
-                break;
-            }
-        }
-    } while (occupied);
-    food = {x, y};
-}
-
-bool checkFoodCollision(
-    const std::vector<std::pair<int,int>>& snake,
-    const std::pair<int,int>& food
-) {
-    return snake[0] == food;
-}
-
-bool checkWallCollision(
-    const std::vector<std::pair<int,int>>& snake
-) {
-    int x = snake[0].first;
-    int y = snake[0].second;
-
-    return x <= 0 || x >= w - 1 ||
-           y <= 0 || y >= h - 1;
-}
-
-bool checkSelfCollision(
-    const std::vector<std::pair<int,int>>& snake
-) {
-    for (std::size_t i = 1; i < snake.size(); i++) {
-        if (snake[0] == snake[i]) {
-            return true;
-        }
+    if (result == 1) {
+        return input;
     }
 
-    return false;
+    return '\0';
 }
 
-void render(
-    std::vector<std::vector<char>>& map,
-    const std::vector<std::pair<int,int>>& snake,
-    const std::pair<int, int>& food
-){
-    for(std::size_t i = 0; i< map.size(); i++){
-        for(std::size_t j = 0; j < map[i].size(); j++){
-            if(i == 0 || i == h-1 || j==0 || j==w-1){
-                map[i][j] = '#';
+void render(const GameState& game) {
+    std::cout << "\033[H";
+
+    for (int y = 0; y < HEIGHT; ++y) {
+        for (int x = 0; x < WIDTH; ++x) {
+            Position current{x, y};
+
+            if (
+                x == 0 || x == WIDTH - 1 ||
+                y == 0 || y == HEIGHT - 1
+            ) {
+                std::cout << '#';
             }
-            else{
-                map[i][j] = ' ';
+            else if (game.snake.front() == current) {
+                std::cout << 'O';
             }
+            else if (
+                contains(
+                    std::vector<Position>(
+                        game.snake.begin() + 1,
+                        game.snake.end()
+                    ),
+                    current
+                )
+            ) {
+                std::cout << 'o';
             }
-        }
-        for(std::size_t i = 0;i<snake.size();i++){
-            map[snake[i].second][snake[i].first]=(i==0)? '6':'Q';
+            else if (contains(game.foods, current)) {
+                std::cout << '*';
+            }
+            else {
+                bool isBigFood = false;
+
+                for (const auto& big : game.bigFoods) {
+                    if (
+                        x >= big.first && x < big.first + 2 &&
+                        y >= big.second && y < big.second + 2
+                    ) {
+                        isBigFood = true;
+                        break;
+                    }
+                }
+
+                std::cout << (isBigFood ? '@' : ' ');
+            }
         }
 
-        map[food.second][food.first] = '@';
+        std::cout << '\n';
+    }
 
-        for(std::size_t i = 0; i< map.size(); i++){
-            for(std::size_t j = 0; j < map[i].size(); j++){
-                std::cout << map[i][j];
-            }
-            std::cout << "\n";
-        }
+    std::cout
+        << "Score: " << game.score
+        << " | Normal food: " << game.foods.size()
+        << " | Big food: " << game.bigFoods.size()
+        << " | dx: " << game.dx
+        << " dy: " << game.dy
+        << "\nWASD: Move | Q: Quit\n"
+        << std::flush;
 }
 
 int main() {
-    std::vector<std::vector<char>> map(h, std::vector<char>(w, ' '));
-    std::vector<std::pair<int,int>> snake;
-    std::pair<int, int> food;
-    snake.push_back({20, 10});
-    snake.push_back({19, 10});
-    snake.push_back({18, 10});
-    generateFood(food, snake);
-    int dx = 1;
-    int dy = 0;
-    terminal_set Let_the_show_begin;
-    bool running = true;
+    try {
+        Terminal terminal;
 
-    while (running) {
-        char key;
-        if (readInput(key)) {
-            if (key == 'q') {
+        std::signal(SIGINT, handleSignal);
+        std::signal(SIGTERM, handleSignal);
+
+        std::random_device rd;
+        std::mt19937 gen(rd());
+
+        GameState game;
+
+        game.snake = {
+            {WIDTH / 2, HEIGHT / 2},
+            {WIDTH / 2 - 1, HEIGHT / 2},
+            {WIDTH / 2 - 2, HEIGHT / 2}
+        };
+
+        replenishNormalFood(game, gen);
+        trySpawnBigFood(game, gen);
+
+        bool running = true;
+        bool lost = false;
+
+        std::cout << "\033[2J\033[?25l";
+
+        while (running && !stopRequested) {
+            char input = readInput();
+
+            switch (input) {
+                case 'w':
+                case 'W':
+                    setDirection(game, 0, -1);
+                    break;
+
+                case 's':
+                case 'S':
+                    setDirection(game, 0, 1);
+                    break;
+
+                case 'a':
+                case 'A':
+                    setDirection(game, -1, 0);
+                    break;
+
+                case 'd':
+                case 'D':
+                    setDirection(game, 1, 0);
+                    break;
+
+                case 'q':
+                case 'Q':
+                    running = false;
+                    continue;
+            }
+
+            MoveResult result = move(game);
+
+            if (
+                result == MoveResult::WallCollision ||
+                result == MoveResult::SelfCollision
+            ) {
+                lost = true;
                 running = false;
                 break;
             }
-            direction(key, dx, dy);
+
+            if (
+                result == MoveResult::AteNormalFood ||
+                result == MoveResult::AteBigFood
+            ) {
+                trySpawnBigFood(game, gen);
+                replenishNormalFood(game, gen);
+            }
+
+            render(game);
+
+            int delay = std::max(60, 150 - (game.score / 5) * 5);
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(delay)
+            );
         }
-        auto oldTail = snake.back();
-        movement(snake, dx, dy);
-        if (checkFoodCollision(snake, food)) {
-            snake.push_back(oldTail);
-            generateFood(food, snake);
+
+        if (lost) {
+            std::cout << "\nGame over. Final score: "
+                      << game.score << '\n';
         }
-        std::cout << "\033[H" << std::flush;
-        render(map, snake, food);
-        if (checkWallCollision(snake) || checkSelfCollision(snake)) {
-            running = false;
-            break;
+        else if (!stopRequested) {
+            std::cout << "\nGame exited. Final score: "
+                      << game.score << '\n';
         }
-        std::this_thread::sleep_for(
-            std::chrono::milliseconds(150)
-        );
-        std::cout << "dx: " << dx << " dy: " << dy << '\n';
     }
+    catch (const std::exception& error) {
+        std::cerr << "Error: " << error.what() << '\n';
+        return 1;
+    }
+
     return 0;
 }

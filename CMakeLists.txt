@@ -1,13 +1,24 @@
+
 cmake_minimum_required(VERSION 3.20)
 
-project(Snake LANGUAGES CXX)
+project(SnakeGame LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+add_library(game_logic game_logic.cpp)
+
+target_include_directories(game_logic PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
 
 add_executable(snake main.cpp)
+target_link_libraries(snake PRIVATE game_logic)
 
-target_compile_features(snake PRIVATE cxx_std_20)
+add_executable(snake_tests tests.cpp)
+target_link_libraries(snake_tests PRIVATE game_logic)
 
-target_compile_options(snake PRIVATE
-    -Wall
-    -Wextra
-    -Wpedantic
-)
+enable_testing()
+add_test(NAME SnakeTests COMMAND snake_tests)
+
