@@ -76,7 +76,7 @@ void render(const GameState& game) {
                 std::cout << '#';
             }
             else if (game.snake.front() == current) {
-                std::cout << 'O';
+                std::cout << '6';
             }
             else if (
                 contains(
@@ -87,7 +87,7 @@ void render(const GameState& game) {
                     current
                 )
             ) {
-                std::cout << 'o';
+                std::cout << 'Q';
             }
             else if (contains(game.foods, current)) {
                 std::cout << '*';
